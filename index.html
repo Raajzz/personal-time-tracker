@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Timer</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background-color: #000;
+            color: #fff;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            overflow: hidden;
+            user-select: none;
+        }
+
+        #timer-display {
+            font-size: 20vw;
+            font-weight: 300;
+            letter-spacing: 0.05em;
+            margin-bottom: 5vh;
+            font-variant-numeric: tabular-nums;
+        }
+
+        #controls {
+            font-size: 1rem;
+            opacity: 0.7;
+            text-align: left;
+            line-height: 1.8;
+        }
+
+        .control-item {
+            margin: 0.3rem 0;
+        }
+
+        .key {
+            display: inline-block;
+            background-color: rgba(255, 255, 255, 0.1);
+            padding: 0.2rem 0.5rem;
+            border-radius: 3px;
+            margin-right: 0.5rem;
+            font-size: 0.9rem;
+            min-width: 2rem;
+            text-align: center;
+        }
+
+        .checkmark {
+            color: #4ade80;
+            margin-left: 0.3rem;
+        }
+
+        .editing {
+            animation: blink 1s infinite;
+        }
+
+        @keyframes blink {
+            0%, 50% { opacity: 1; }
+            51%, 100% { opacity: 0.3; }
+        }
+
+        #notification {
+            position: fixed;
+            top: 2rem;
+            left: 50%;
+            transform: translateX(-50%);
+            background-color: rgba(255, 255, 255, 0.15);
+            padding: 1rem 2rem;
+            border-radius: 8px;
+            font-size: 1.2rem;
+            opacity: 0;
+            transition: opacity 0.3s;
+            pointer-events: none;
+        }
+
+        #notification.show {
+            opacity: 1;
+        }
+    </style>
+</head>
+<body>
+    <div id="timer-display">00:00:00</div>
+    
+    <div id="controls">
+        <div class="control-item"><span class="key">F</span> - enter fullscreen</div>
+        <div class="control-item"><span class="key">←</span> <span class="key">→</span> <span class="key">↑</span> <span class="key">↓</span> - edit timer</div>
+        <div class="control-item"><span class="key">R</span> - reset timer</div>
+        <div class="control-item"><span class="key">S</span> - countdown or stopwatch<span id="mode-indicator" class="checkmark">✓</span></div>
+        <div class="control-item"><span class="key">Space</span> - start timer</div>
+    </div>
+
+    <div id="notification"></div>
+
+    <script>
+        class Timer {
+            constructor() {
+                this.displayElement = document.getElementById('timer-display');
+                this.notificationElement = document.getElementById('notification');
+                this.modeIndicator = document.getElementById('mode-indicator');
+                
+                // Timer state
+                this.hours = 0;
+                this.minutes = 0;
+                this.seconds = 0;
+                this.isCountdown = false; // true = countdown, false = stopwatch
+                this.isRunning = false;
+                this.isEditing = false;
+                this.editingField = 'minutes'; // 'hours', 'minutes' or 'seconds'
+                
+                // For background operation
+                this.startTime = null;
+                this.pausedTime = 0;
+                this.totalPausedDuration = 0;
+                this.lastPauseTime = null;
+                
+                this.init();
+            }
+
+            init() {
+                this.updateDisplay();
+                this.setupKeyboardControls();
+                this.animate();
+                
+                // Set initial mode indicator
+                if (this.isCountdown) {
+                    this.modeIndicator.style.display = 'inline';
+                } else {
+                    this.modeIndicator.style.display = 'none';
+                }
+            }
+
+            setupKeyboardControls() {
+                document.addEventListener('keydown', (e) => {
+                    switch(e.key.toLowerCase()) {
+                        case 'f':
+                            this.toggleFullscreen();
+                            break;
+                        case ' ':
+                            e.preventDefault();
+                            this.toggleTimer();
+                            break;
+                        case 'r':
+                            this.resetTimer();
+                            break;
+                        case 's':
+                            this.toggleMode();
+                            break;
+                        case 'arrowup':
+                            e.preventDefault();
+                            this.adjustTime(1);
+                            break;
+                        case 'arrowdown':
+                            e.preventDefault();
+                            this.adjustTime(-1);
+                            break;
+                        case 'arrowleft':
+                            e.preventDefault();
+                            this.switchEditField('left');
+                            break;
+                        case 'arrowright':
+                            e.preventDefault();
+                            this.switchEditField('right');
+                            break;
+                    }
+                });
+            }
+
+            toggleFullscreen() {
+                if (!document.fullscreenElement) {
+                    document.documentElement.requestFullscreen().catch(err => {
+                        this.showNotification('Fullscreen failed: ' + err.message);
+                    });
+                } else {
+                    document.exitFullscreen();
+                }
+            }
+
+            toggleTimer() {
+                if (this.isRunning) {
+                    this.pauseTimer();
+                } else {
+                    this.startTimer();
+                }
+            }
+
+            startTimer() {
+                if (this.isRunning) return;
+                
+                this.isRunning = true;
+                this.isEditing = false;
+                this.displayElement.classList.remove('editing');
+                
+                // Start timer accounting for any previously elapsed time
+                this.startTime = Date.now();
+                
+                this.showNotification('Timer started');
+            }
+
+            pauseTimer() {
+                if (!this.isRunning) return;
+                
+                this.isRunning = false;
+                
+                // Calculate and save the elapsed time when pausing
+                const elapsed = (Date.now() - this.startTime) / 1000;
+                this.pausedTime = this.pausedTime + elapsed;
+                
+                this.showNotification('Timer paused');
+            }
+
+            resetTimer() {
+                this.isRunning = false;
+                this.isEditing = false;
+                this.displayElement.classList.remove('editing');
+                this.startTime = null;
+                
+                if (this.isCountdown) {
+                    this.hours = 0;
+                    this.minutes = 1;
+                    this.seconds = 30;
+                    this.pausedTime = this.hours * 3600 + this.minutes * 60 + this.seconds;
+                } else {
+                    this.hours = 0;
+                    this.minutes = 0;
+                    this.seconds = 0;
+                    this.pausedTime = 0;
+                }
+                
+                this.updateDisplay();
+                this.showNotification('Timer reset');
+            }
+
+            toggleMode() {
+                this.isCountdown = !this.isCountdown;
+                this.resetTimer();
+                
+                if (this.isCountdown) {
+                    this.modeIndicator.style.display = 'inline';
+                    this.showNotification('Mode: Countdown');
+                } else {
+                    this.modeIndicator.style.display = 'none';
+                    this.showNotification('Mode: Stopwatch');
+                }
+            }
+
+            switchEditField(direction) {
+                if (this.isRunning) return;
+                
+                this.isEditing = true;
+                this.displayElement.classList.add('editing');
+                
+                if (direction === 'left') {
+                    if (this.editingField === 'seconds') {
+                        this.editingField = 'minutes';
+                    } else if (this.editingField === 'minutes') {
+                        this.editingField = 'hours';
+                    }
+                } else if (direction === 'right') {
+                    if (this.editingField === 'hours') {
+                        this.editingField = 'minutes';
+                    } else if (this.editingField === 'minutes') {
+                        this.editingField = 'seconds';
+                    }
+                }
+            }
+
+            adjustTime(delta) {
+                if (this.isRunning) return;
+                
+                this.isEditing = true;
+                this.displayElement.classList.add('editing');
+                
+                if (this.editingField === 'hours') {
+                    this.hours = Math.max(0, Math.min(23, this.hours + delta));
+                } else if (this.editingField === 'minutes') {
+                    this.minutes = Math.max(0, Math.min(59, this.minutes + delta));
+                } else {
+                    this.seconds = Math.max(0, Math.min(59, this.seconds + delta));
+                }
+                
+                // Update pausedTime for countdown mode
+                if (this.isCountdown) {
+                    this.pausedTime = this.hours * 3600 + this.minutes * 60 + this.seconds;
+                }
+                
+                this.updateDisplay();
+            }
+
+            updateDisplay() {
+                const hrs = String(Math.floor(Math.abs(this.hours))).padStart(2, '0');
+                const mins = String(Math.floor(Math.abs(this.minutes))).padStart(2, '0');
+                const secs = String(Math.floor(Math.abs(this.seconds))).padStart(2, '0');
+                this.displayElement.textContent = `${hrs}:${mins}:${secs}`;
+            }
+
+            animate() {
+                if (this.isRunning) {
+                    const elapsed = (Date.now() - this.startTime) / 1000;
+                    
+                    if (this.isCountdown) {
+                        // Start from the time stored when reset/set, count down from there
+                        const currentTotal = Math.max(0, this.pausedTime - elapsed);
+                        
+                        if (currentTotal <= 0) {
+                            this.hours = 0;
+                            this.minutes = 0;
+                            this.seconds = 0;
+                            this.isRunning = false;
+                            this.pausedTime = 0;
+                            this.showNotification('Time\'s up!');
+                            this.playBeep();
+                        } else {
+                            this.hours = Math.floor(currentTotal / 3600);
+                            this.minutes = Math.floor((currentTotal % 3600) / 60);
+                            this.seconds = Math.floor(currentTotal % 60);
+                        }
+                    } else {
+                        // Stopwatch mode - count up from pausedTime
+                        const currentTotal = Math.min(this.pausedTime + elapsed, 86399); // Cap at 23:59:59
+                        this.hours = Math.floor(currentTotal / 3600);
+                        this.minutes = Math.floor((currentTotal % 3600) / 60);
+                        this.seconds = Math.floor(currentTotal % 60);
+                        
+                        // Stop at 23:59:59
+                        if (currentTotal >= 86399) {
+                            this.isRunning = false;
+                            this.showNotification('Maximum time reached!');
+                            this.playBeep();
+                        }
+                    }
+                    
+                    this.updateDisplay();
+                }
+                
+                requestAnimationFrame(() => this.animate());
+            }
+
+            showNotification(message) {
+                this.notificationElement.textContent = message;
+                this.notificationElement.classList.add('show');
+                
+                setTimeout(() => {
+                    this.notificationElement.classList.remove('show');
+                }, 2000);
+            }
+
+            playBeep() {
+                // Create a simple beep sound using Web Audio API
+                const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                const oscillator = audioContext.createOscillator();
+                const gainNode = audioContext.createGain();
+                
+                oscillator.connect(gainNode);
+                gainNode.connect(audioContext.destination);
+                
+                oscillator.frequency.value = 800;
+                oscillator.type = 'sine';
+                
+                gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.5);
+                
+                oscillator.start(audioContext.currentTime);
+                oscillator.stop(audioContext.currentTime + 0.5);
+            }
+        }
+
+        // Initialize the timer when page loads
+        const timer = new Timer();
+
+        // Ensure timer continues running in background
+        // This prevents the timer from stopping when tab is not visible
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) {
+                console.log('Tab hidden - timer continues in background');
+            } else {
+                console.log('Tab visible - timer syncing');
+            }
+        });
+    </script>
+</body>
+</html>
+
